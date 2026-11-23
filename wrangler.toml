@@ -1,0 +1,16 @@
+# Cloudflare Pages + D1 configuration.
+name = "temple-kitchen-safety"
+compatibility_date = "2026-11-01"
+pages_build_output_dir = "dist"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "temple-kitchen-safety"
+# Replace with the id printed by: npx wrangler d1 create temple-kitchen-safety
+database_id = "00000000-0000-0000-0000-000000000000"
+migrations_dir = "migrations"
+
+# To protect the reports with Cloudflare Access, set these in the Pages project
+# (Settings > Variables and Secrets) rather than here:
+#   ACCESS_TEAM_DOMAIN = "your-team.cloudflareaccess.com"
+#   ACCESS_AUD         = "<Application Audience (AUD) tag>"

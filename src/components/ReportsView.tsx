@@ -1,20 +1,20 @@
 import { useEffect, useMemo, useState } from "react";
 import { incidentLabel } from "../formConfig";
 import { reportsToCsv } from "../lib/csv";
-import type { ReportStore } from "../lib/storage";
+import { SignInRequiredError, type ReportStore } from "../lib/storage";
 import type { Report } from "../types";
 
 type Filter = "all" | "followup" | "incidents";
 
 interface Props {
   store: ReportStore;
-  refreshKey: number;
 }
 
-export function ReportsView({ store, refreshKey }: Props) {
+export function ReportsView({ store }: Props) {
   const [reports, setReports] = useState<Report[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [needsSignIn, setNeedsSignIn] = useState(false);
   const [filter, setFilter] = useState<Filter>("followup");
 
   useEffect(() => {
@@ -23,12 +23,16 @@ export function ReportsView({ store, refreshKey }: Props) {
     store
       .list()
       .then((r) => !cancelled && setReports(r))
-      .catch((e: unknown) => !cancelled && setError(e instanceof Error ? e.message : String(e)))
+      .catch((e: unknown) => {
+        if (cancelled) return;
+        if (e instanceof SignInRequiredError) setNeedsSignIn(true);
+        else setError(e instanceof Error ? e.message : String(e));
+      })
       .finally(() => !cancelled && setLoading(false));
     return () => {
       cancelled = true;
     };
-  }, [store, refreshKey]);
+  }, [store]);
 
   const openFollowUps = reports.filter((r) => r.followUpRequired && r.status === "open");
   const visible = useMemo(() => {
@@ -38,8 +42,13 @@ export function ReportsView({ store, refreshKey }: Props) {
   }, [filter, reports, openFollowUps]);
 
   async function resolve(id: string) {
-    await store.setStatus(id, "resolved");
-    setReports((rs) => rs.map((r) => (r.id === id ? { ...r, status: "resolved" } : r)));
+    try {
+      await store.setStatus(id, "resolved");
+      setReports((rs) => rs.map((r) => (r.id === id ? { ...r, status: "resolved" } : r)));
+    } catch (e) {
+      if (e instanceof SignInRequiredError) setNeedsSignIn(true);
+      else setError(e instanceof Error ? e.message : String(e));
+    }
   }
 
   function exportCsv() {
@@ -52,6 +61,17 @@ export function ReportsView({ store, refreshKey }: Props) {
     URL.revokeObjectURL(url);
   }
 
+  if (needsSignIn) {
+    return (
+      <section className="card">
+        <h2>Coordinator sign-in needed</h2>
+        <p>Your sign-in has expired. Reload the page to sign in again.</p>
+        <button className="primary" onClick={() => window.location.reload()}>
+          Reload and sign in
+        </button>
+      </section>
+    );
+  }
   if (loading) return <p className="card">Loading reports…</p>;
   if (error) return <p className="card error">Could not load reports: {error}</p>;
 

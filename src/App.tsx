@@ -1,46 +1,42 @@
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
 import { SafetyForm } from "./components/SafetyForm";
 import { ReportsView } from "./components/ReportsView";
 import { createStore } from "./lib/storage";
 
-type View = "form" | "reports";
+// The reports page lives at /admin so Cloudflare Access can protect that path
+// (and /api/reports) while the form at / stays open to volunteers.
+const isReportsPage = () => window.location.pathname.replace(/\/+$/, "").endsWith("/admin");
 
 export default function App() {
   const store = useMemo(createStore, []);
-  const [view, setView] = useState<View>("form");
-  const [refreshKey, setRefreshKey] = useState(0);
+  const reports = isReportsPage();
 
   return (
     <div className="app">
       <header>
         <h1>Temple Kitchen Safety Check</h1>
-        <p>Fill this in each time you clean the kitchen.</p>
+        <p>
+          {reports
+            ? "Kitchen coordinator view: follow up on reported issues."
+            : "Fill this in each time you clean the kitchen."}
+        </p>
         <nav>
-          <button className={view === "form" ? "active" : ""} onClick={() => setView("form")}>
+          <a href="/" className={reports ? "" : "active"} aria-current={reports ? undefined : "page"}>
             New check
-          </button>
-          <button
-            className={view === "reports" ? "active" : ""}
-            onClick={() => setView("reports")}
-          >
+          </a>
+          <a href="/admin" className={reports ? "active" : ""} aria-current={reports ? "page" : undefined}>
             Reports
-          </button>
+          </a>
         </nav>
       </header>
 
       {store.mode === "demo" && (
         <p className="demo-banner">
-          Demo mode: reports are saved in this browser only. Connect Supabase to share them.
+          Demo mode: reports are saved in this browser only. Deploy to Cloudflare to share them.
         </p>
       )}
 
-      <main>
-        {view === "form" ? (
-          <SafetyForm store={store} onSubmitted={() => setRefreshKey((k) => k + 1)} />
-        ) : (
-          <ReportsView store={store} refreshKey={refreshKey} />
-        )}
-      </main>
+      <main>{reports ? <ReportsView store={store} /> : <SafetyForm store={store} />}</main>
     </div>
   );
 }

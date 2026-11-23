@@ -1,92 +1,62 @@
-import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import type { NewReport, Report, ReportStatus } from "../types";
 
 export interface ReportStore {
-  /** "supabase" when connected to the shared database, "demo" when saving in this browser only. */
-  readonly mode: "supabase" | "demo";
+  /** "api" when saving to the shared D1 database, "demo" when saving in this browser only. */
+  readonly mode: "api" | "demo";
   list(): Promise<Report[]>;
   add(report: NewReport): Promise<Report>;
   setStatus(id: string, status: ReportStatus): Promise<void>;
 }
 
-const TABLE = "kitchen_safety_reports";
+/** Thrown when a coordinator needs to sign in (Cloudflare Access). */
+export class SignInRequiredError extends Error {}
 
-/** Row shape in Postgres (snake_case). */
-interface ReportRow {
-  id: string;
-  created_at: string;
-  submitted_by: string;
-  areas: string[];
-  checks: string[];
-  fridge_temp_c: number | null;
-  incident_type: Report["incidentType"];
-  hazards: string[];
-  severity: Report["severity"];
-  description: string;
-  actions_taken: string[];
-  follow_up_required: boolean;
-  status: ReportStatus;
+async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const res = await fetch(path, {
+    ...init,
+    credentials: "same-origin",
+    headers: init?.body ? { "content-type": "application/json" } : undefined,
+  });
+  // Access may redirect an expired session to its login page instead of returning JSON.
+  if (res.status === 401 || res.status === 403 || res.redirected) {
+    throw new SignInRequiredError("Please sign in as a kitchen coordinator.");
+  }
+  const body = (await res.json().catch(() => ({}))) as { error?: string; details?: string[] } & T;
+  if (!res.ok) {
+    const details = body.details?.length ? ` ${body.details.join(" ")}` : "";
+    throw new Error((body.error ?? `Request failed (${res.status}).`) + details);
+  }
+  return body;
 }
 
-export const fromRow = (r: ReportRow): Report => ({
-  id: r.id,
-  createdAt: r.created_at,
-  submittedBy: r.submitted_by,
-  areas: r.areas ?? [],
-  checks: r.checks ?? [],
-  fridgeTempC: r.fridge_temp_c,
-  incidentType: r.incident_type,
-  hazards: r.hazards ?? [],
-  severity: r.severity,
-  description: r.description ?? "",
-  actionsTaken: r.actions_taken ?? [],
-  followUpRequired: r.follow_up_required,
-  status: r.status,
-});
-
-export const toRow = (r: NewReport) => ({
-  submitted_by: r.submittedBy,
-  areas: r.areas,
-  checks: r.checks,
-  fridge_temp_c: r.fridgeTempC,
-  incident_type: r.incidentType,
-  hazards: r.hazards,
-  severity: r.severity,
-  description: r.description,
-  actions_taken: r.actionsTaken,
-  follow_up_required: r.followUpRequired,
-});
-
-class SupabaseStore implements ReportStore {
-  readonly mode = "supabase" as const;
-  constructor(private db: SupabaseClient) {}
+/** Talks to the Cloudflare Pages Functions in /functions, which store reports in D1. */
+export class ApiStore implements ReportStore {
+  readonly mode = "api" as const;
 
   async list(): Promise<Report[]> {
-    const { data, error } = await this.db
-      .from(TABLE)
-      .select("*")
-      .order("created_at", { ascending: false });
-    if (error) throw new Error(error.message);
-    return (data as ReportRow[]).map(fromRow);
+    return (await request<{ reports: Report[] }>("/api/reports")).reports;
   }
 
   async add(report: NewReport): Promise<Report> {
-    const { data, error } = await this.db.from(TABLE).insert(toRow(report)).select().single();
-    if (error) throw new Error(error.message);
-    return fromRow(data as ReportRow);
+    const body = JSON.stringify(report);
+    return (await request<{ report: Report }>("/api/submit", { method: "POST", body })).report;
   }
 
   async setStatus(id: string, status: ReportStatus): Promise<void> {
-    const { error } = await this.db.from(TABLE).update({ status }).eq("id", id);
-    if (error) throw new Error(error.message);
+    await request(`/api/reports/${encodeURIComponent(id)}`, {
+      method: "PATCH",
+      body: JSON.stringify({ status }),
+    });
   }
 }
 
 const LOCAL_KEY = "kitchen-safety-reports";
 
-/** Fallback used when no Supabase keys are configured, e.g. the public GitHub Pages demo. */
+/** Used when no API is configured, e.g. `npm run dev`. Reports stay in this browser. */
 export class LocalStore implements ReportStore {
   readonly mode = "demo" as const;
+  private memory: Report[] | null = null;
+
   constructor(private storage: Pick<Storage, "getItem" | "setItem"> | null = safeLocalStorage()) {}
 
   private read(): Report[] {
@@ -105,8 +75,6 @@ export class LocalStore implements ReportStore {
       // Storage can be unavailable (private mode); the report still shows for this session.
     }
   }
-
-  private memory: Report[] | null = null;
 
   async list(): Promise<Report[]> {
     this.memory ??= this.read();
@@ -140,7 +108,5 @@ function safeLocalStorage(): Storage | null {
 }
 
 export function createStore(): ReportStore {
-  const url = import.meta.env.VITE_SUPABASE_URL as string | undefined;
-  const key = import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined;
-  return url && key ? new SupabaseStore(createClient(url, key)) : new LocalStore();
+  return import.meta.env.VITE_STORAGE === "api" ? new ApiStore() : new LocalStore();
 }

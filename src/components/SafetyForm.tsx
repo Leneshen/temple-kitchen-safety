@@ -22,10 +22,9 @@ import type { ReportDraft } from "../types";
 
 interface Props {
   store: ReportStore;
-  onSubmitted: () => void;
 }
 
-export function SafetyForm({ store, onSubmitted }: Props) {
+export function SafetyForm({ store }: Props) {
   const [draft, setDraft] = useState<ReportDraft>(emptyDraft);
   const [errors, setErrors] = useState<Errors>({});
   const [saving, setSaving] = useState(false);
@@ -56,7 +55,6 @@ export function SafetyForm({ store, onSubmitted }: Props) {
     try {
       await store.add(toNewReport(draft));
       setDone(true);
-      onSubmitted();
     } catch (err) {
       setSaveError(err instanceof Error ? err.message : "Could not save the report.");
     } finally {
@@ -68,7 +66,7 @@ export function SafetyForm({ store, onSubmitted }: Props) {
     return (
       <section className="card done" aria-live="polite">
         <h2>Thank you, the check is recorded</h2>
-        <p>The kitchen coordinator can see it under Reports.</p>
+        <p>The kitchen coordinator will see it on the Reports page.</p>
         <button
           className="primary"
           onClick={() => {

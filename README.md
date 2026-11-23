@@ -1,71 +1,91 @@
 # Temple Kitchen Safety Check
 
-A mobile-friendly health and safety form for volunteers who clean the kitchen at the Sri Balaji Temple in Hamilton, New Zealand, plus a reports page for the kitchen coordinator.
+A mobile-friendly health and safety form for volunteers who clean the kitchen at the Sri Balaji Temple in Hamilton, New Zealand, plus a protected reports page for the kitchen coordinator.
 
 Volunteers tap selection boxes instead of typing, so a check takes about a minute on a phone. The coordinator sees every check, filters to the ones that need follow-up, marks them resolved and exports everything to CSV.
 
 ![Form and reports screens](docs/screenshot.png)
 
-**Live demo:** `https://<your-github-username>.github.io/temple-kitchen-safety/`
-
 ## What it does
 
 - **Tap-to-select form:** areas cleaned, safety checks completed, fridge temperature, and whether anything happened (hazard, near miss, spill, equipment fault or injury).
 - **Follow-up questions only when needed:** hazard type, severity, what happened and what was done appear only if something was reported.
-- **Built-in safety rules:** a fridge reading above 5°C or any high-severity incident is automatically flagged for follow-up, with an on-screen prompt to tell the coordinator (and to call 111 if anyone is in danger).
-- **Validation with clear messages:** required fields and implausible readings are caught before submission.
-- **Coordinator reports:** totals, open follow-ups, incident filter, "Mark resolved" and CSV export for committee meetings.
+- **Safety rules enforced on the server:** a fridge reading above 5°C or any high-severity incident is always flagged for follow-up, whatever the browser sends.
+- **Coordinator reports at `/admin`:** totals, open follow-ups, incident filter, "Mark resolved" and CSV export, protected by Cloudflare Access.
 - **Accessible:** selection boxes are real checkboxes and radio buttons, so they work with keyboards and screen readers.
 
-## Tech
-
-- React 19 + TypeScript, built with Vite
-- Supabase (Postgres) for shared storage, with row-level security
-- Falls back to browser storage when no database is configured, so the public demo works with no setup
-- Vitest unit tests for validation rules, CSV export and the data layer
-- GitHub Actions runs the tests, builds and deploys to GitHub Pages on every push to `main`
+## Architecture
 
 ```
-src/
-  App.tsx                  navigation between form and reports
-  formConfig.ts            all form options in one place (edit to suit the kitchen)
-  components/ChipGroup.tsx accessible selection-box component
-  components/SafetyForm.tsx
-  components/ReportsView.tsx
-  lib/validate.ts          validation and follow-up rules
-  lib/storage.ts           Supabase and local storage behind one interface
-  lib/csv.ts               CSV export
-supabase/schema.sql        table, constraints and access policies
+Phone (React form)  ──POST /api/submit──────▶  Cloudflare Pages Functions  ──▶  Cloudflare D1 (SQLite)
+Coordinator (/admin) ─GET/PATCH /api/reports─▶  (Access token checked)
+```
+
+- **Frontend:** React 19 + TypeScript, built with Vite, hosted on Cloudflare Pages.
+- **API:** Cloudflare Pages Functions in `functions/`, with the logic in `server/`.
+  - `POST /api/submit` is public, so volunteers don't need an account.
+  - `GET /api/reports` and `PATCH /api/reports/:id` are for coordinators only.
+- **Database:** Cloudflare D1, defined by SQL migrations in `migrations/`.
+- **Validation:** `shared/reportRules.ts` is used by both the form and the API, so the rules can't drift apart. The API never trusts the browser: it re-checks types, allowed options, lengths and the incident rules, and rejects oversized or non-JSON requests.
+- **Security:** Cloudflare Access protects `/admin` and `/api/reports`. The API also verifies the Access token (JWT) itself, in case the Access policy is ever misconfigured.
+- **Tests:** Vitest. The API tests run against a real SQLite database built from the same migration that D1 uses.
+- **CI:** GitHub Actions type-checks, tests and builds every push. Cloudflare Pages deploys `main` automatically.
+
+```
+src/                 React app (form, reports, demo-mode storage)
+shared/              types, form options and validation rules used by app and API
+server/              API handlers, D1 queries, Access token check
+functions/api/       Cloudflare Pages Functions routes
+migrations/          D1 schema
+tests/               API, rules and storage tests
 ```
 
 ## Run it locally
 
+Requires Node.js 22 or later.
+
 ```bash
 npm install
-npm run dev      # http://localhost:5173
-npm test         # unit tests
+npm test             # unit and API tests
+npm run dev          # quick UI preview in demo mode (saves in your browser)
 ```
 
-Without Supabase keys the app runs in demo mode and saves reports in your browser.
+To run the full stack (API and a local D1 database) on your machine:
 
-## Connect Supabase (shared database)
+```bash
+npm run db:migrate:local   # create the local database
+npm run cf:dev             # build and serve at http://localhost:8788
+```
 
-1. Create a free project at [supabase.com](https://supabase.com).
-2. Open **SQL Editor**, paste in `supabase/schema.sql` and run it.
-3. Copy `.env.example` to `.env.local` and add your **Project URL** and **anon public key** from **Project Settings > API**.
-4. Restart `npm run dev`. The demo banner disappears and reports are saved to the database.
+## Deploy to Cloudflare
 
-## Deploy to GitHub Pages
+You need a free Cloudflare account and the Wrangler CLI (installed with `npm install`).
 
-1. Push this folder to a GitHub repository named `temple-kitchen-safety`.
-2. In the repository, go to **Settings > Pages** and set **Source** to **GitHub Actions**.
-3. To use Supabase on the live site, add `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` under **Settings > Secrets and variables > Actions**. Leave them out to publish in demo mode.
-4. Push to `main`. The workflow tests, builds and deploys the site.
+1. **Sign in:** `npx wrangler login`
+2. **Create the database:** `npx wrangler d1 create temple-kitchen-safety`. Copy the `database_id` it prints into `wrangler.toml`.
+3. **Create the table:** `npm run db:migrate:remote`
+4. **Create the Pages project:** in the Cloudflare dashboard, go to **Workers & Pages > Create > Pages > Connect to Git** and pick this repository. Use:
+   - Build command: `npm run build:cf`
+   - Build output directory: `dist`
+   - Environment variable: `NODE_VERSION` = `22`
 
-## Security note
+   Pages reads the D1 binding from `wrangler.toml`. If the Functions can't find the database, add it under **Settings > Bindings > D1 database** with the variable name `DB`.
+5. **Deploy:** push to `main`. The site goes live at `https://temple-kitchen-safety.pages.dev`.
 
-The anon key is public by design; access is controlled by the row-level security policies in `schema.sql`. In the current demo setup, anyone with the link can view reports and mark them resolved. Before real use, restrict the read and update policies to signed-in coordinators and add Supabase Auth to the Reports page.
+## Protect the reports with Cloudflare Access
+
+Until this step, anyone with the link can open `/admin`. That's fine for a demo but not for real use.
+
+1. In **Zero Trust > Access > Applications**, add a **Self-hosted** application for your Pages domain, with these paths:
+   - `/admin`
+   - `/api/reports`
+2. Add a policy allowing only the coordinators' email addresses, signing in with a one-time email PIN. This is free for up to 50 users.
+3. Copy the application's **Audience (AUD) tag**.
+4. In the Pages project, go to **Settings > Variables and Secrets** and add:
+   - `ACCESS_TEAM_DOMAIN`, set to `your-team.cloudflareaccess.com`
+   - `ACCESS_AUD`, set to the AUD tag
+5. Redeploy. The API now rejects coordinator requests without a valid Access token.
 
 ## Customising
 
-All checklist options live in `src/formConfig.ts`. Edit the lists there to match the temple's own kitchen procedures; no other code needs to change.
+All checklist options live in `shared/formOptions.ts`. Edit the lists there and both the form and the API validation update together. Database changes go in a new numbered file in `migrations/`.

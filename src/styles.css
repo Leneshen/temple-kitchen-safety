@@ -19,6 +19,7 @@
 * { box-sizing: border-box; }
 body { margin: 0; background: var(--bg); }
 button, input, textarea { font: inherit; }
+nav a { color: var(--ink); text-decoration: none; }
 
 .app { max-width: 760px; margin: 0 auto; padding: 16px 16px 48px; }
 
@@ -26,14 +27,14 @@ header h1 { margin: 8px 0 4px; font-size: 1.6rem; color: var(--brand); }
 header p { margin: 0 0 12px; color: var(--muted); }
 
 nav, .tabs { display: flex; gap: 8px; flex-wrap: wrap; }
-nav button, .tabs button, .toolbar > button, .report-foot button {
+nav a, .tabs button, .toolbar > button, .report-foot button {
   border: 1px solid var(--line);
   background: var(--card);
   border-radius: 999px;
   padding: 8px 16px;
   cursor: pointer;
 }
-nav button.active, .tabs button.active {
+nav a.active, .tabs button.active {
   background: var(--brand);
   border-color: var(--brand);
   color: #fff;

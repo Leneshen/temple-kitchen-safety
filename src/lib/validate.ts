@@ -1,4 +1,5 @@
 import { FRIDGE_MAX_C } from "../formConfig";
+import { LIMITS, needsFollowUp } from "../../shared/reportRules";
 import type { NewReport, ReportDraft } from "../types";
 
 export type Errors = Partial<Record<keyof ReportDraft, string>>;
@@ -33,18 +34,24 @@ export function validate(draft: ReportDraft): Errors {
   const errors: Errors = {};
 
   if (!draft.submittedBy.trim()) errors.submittedBy = "Please enter your name.";
+  else if (draft.submittedBy.trim().length > LIMITS.nameLength) {
+    errors.submittedBy = "That name is too long.";
+  }
   if (draft.areas.length === 0) errors.areas = "Select at least one area you cleaned.";
 
   const temp = parseTemp(draft.fridgeTempC);
   if (Number.isNaN(temp)) {
     errors.fridgeTempC = "Enter the temperature as a number, e.g. 4.";
-  } else if (temp !== null && (temp < -30 || temp > 30)) {
+  } else if (temp !== null && (temp < LIMITS.minTemp || temp > LIMITS.maxTemp)) {
     errors.fridgeTempC = "That temperature looks wrong. Please check the reading.";
   }
 
   if (hasIncident(draft)) {
     if (!draft.severity) errors.severity = "Choose how serious it was.";
     if (!draft.description.trim()) errors.description = "Briefly describe what happened.";
+    else if (draft.description.trim().length > LIMITS.descriptionLength) {
+      errors.description = "Please keep the description under 1,000 characters.";
+    }
     if (draft.actionsTaken.length === 0) {
       errors.actionsTaken = "Select what was done about it.";
     }
@@ -63,7 +70,7 @@ export function fridgeOutOfRange(draft: Pick<ReportDraft, "fridgeTempC">): boole
 /** Converts a valid draft into the record we save. Incident fields are cleared when nothing happened. */
 export function toNewReport(draft: ReportDraft): NewReport {
   const incident = hasIncident(draft);
-  return {
+  const report: NewReport = {
     submittedBy: draft.submittedBy.trim(),
     areas: draft.areas,
     checks: draft.checks,
@@ -73,7 +80,8 @@ export function toNewReport(draft: ReportDraft): NewReport {
     severity: incident && draft.severity ? draft.severity : null,
     description: incident ? draft.description.trim() : "",
     actionsTaken: incident ? draft.actionsTaken : [],
-    followUpRequired:
-      draft.followUpRequired || fridgeOutOfRange(draft) || draft.severity === "high",
+    followUpRequired: draft.followUpRequired,
   };
+  report.followUpRequired = needsFollowUp(report);
+  return report;
 }

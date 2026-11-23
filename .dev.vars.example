@@ -1,0 +1,3 @@
+# Optional: copy to .dev.vars to test Cloudflare Access checks locally with `npm run cf:dev`.
+# ACCESS_TEAM_DOMAIN=your-team.cloudflareaccess.com
+# ACCESS_AUD=your-access-application-aud-tag
